@@ -22,6 +22,7 @@ class AniWertiApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         try {
             AppSettingsManager.init(this)
+            com.example.data.api.AnixartService.init(this)
             UserSessionManager.getInstance(this)
             AnimeDatabase.getDatabase(this)
             RealtimeSocialManager.getInstance(this)
@@ -42,6 +43,9 @@ class AniWertiApplication : Application(), ImageLoaderFactory {
                 val host = originalRequest.url.host
                 val requestBuilder = originalRequest.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                if (host.contains("anixmirai") || host.contains("anixart")) {
+                    requestBuilder.header("User-Agent", "AnixartApp/8.2")
+                }
                 if (host.contains("shikimori")) {
                     requestBuilder.header("Referer", "https://shikimori.io/")
                 }

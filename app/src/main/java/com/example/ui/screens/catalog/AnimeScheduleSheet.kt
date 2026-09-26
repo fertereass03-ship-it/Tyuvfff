@@ -196,7 +196,7 @@ fun AnimeScheduleSheet(
                         )
                     )
                     Text(
-                        text = "Календарь Shikimori новинок 2026 по дням недели",
+                        text = "Календарь выхода новинок по дням недели",
                         color = TextMuted,
                         fontSize = 12.sp
                     )

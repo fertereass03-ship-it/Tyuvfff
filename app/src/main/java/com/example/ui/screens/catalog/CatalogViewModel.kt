@@ -98,7 +98,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
 
     private val _scheduleState = MutableStateFlow(
         ScheduleUiState(
-            items = com.example.data.repository.AnimeScheduleData.getRealShikimoriSchedule(),
+            items = com.example.data.api.AnixartService.getScheduleFast(),
             isLoading = false
         )
     )
@@ -512,7 +512,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 _scheduleState.value = _scheduleState.value.copy(
                     isLoading = false,
                     items = list,
-                    errorMessage = if (list.isEmpty()) "Не удалось получить расписание с Shikimori" else null
+                    errorMessage = if (list.isEmpty()) "Не удалось получить расписание" else null
                 )
             } catch (e: Exception) {
                 _scheduleState.value = _scheduleState.value.copy(

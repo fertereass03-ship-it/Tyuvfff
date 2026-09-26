@@ -83,13 +83,11 @@ class AnimeRepository(context: Context) {
     }
 
     init {
-        // Background pre-fetch of schedule and Yani posters for instant availability
+        // Initialize Anixart catalog and background pre-fetch
+        com.example.data.api.AnixartService.init(context)
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             try {
                 getSchedule()
-            } catch (_: Throwable) {}
-            try {
-                com.example.data.api.YaniCatalogService.precachePopularPosters()
             } catch (_: Throwable) {}
         }
     }
@@ -147,34 +145,12 @@ class AnimeRepository(context: Context) {
         }
     }
 
-    // --- Shikimori API Calls with Fallbacks ---
+    // --- Anixart Catalog Implementation ---
 
     suspend fun getPopularAnimes(limit: Int = 100, page: Int = 1): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        try {
-            val startPage = (page - 1) * 2 + 1
-            val pagesToFetch = if (limit <= 50) listOf(page) else listOf(startPage, startPage + 1, startPage + 2)
-            val fetchedList = mutableListOf<ShikimoriAnimeDto>()
-
-            for (p in pagesToFetch) {
-                try {
-                    val batch = shikimoriApi.getAnimes(page = p, limit = 50, order = "popularity", kind = "tv,movie,ova,ona")
-                    fetchedList.addAll(batch)
-                    if (batch.isEmpty()) break
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error fetching popular page $p: ${e.message}")
-                }
-            }
-
-            val validAnimes = fetchedList
-                .filter { !isFakeOrNonExistentAnime(it) }
-                .distinctBy { it.id }
-                .take(limit)
-
-            if (validAnimes.isNotEmpty()) {
-                return@withContext com.example.data.api.AniListService.enrichAnimeCovers(validAnimes)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load popular from Shikimori: ${e.message}")
+        val anixartPopular = com.example.data.api.AnixartService.getPopular(limit, page)
+        if (anixartPopular.isNotEmpty()) {
+            return@withContext anixartPopular
         }
         com.example.data.api.AniListService.enrichAnimeCovers(getMockPopularAnimes().filter { !isFakeOrNonExistentAnime(it) })
     }
@@ -187,101 +163,20 @@ class AnimeRepository(context: Context) {
     }
 
     suspend fun get2026Releases(limit: Int = 100, page: Int = 1): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        val mock2026 = getMock2026Animes().filter { !isFakeOrNonExistentAnime(it) }
-        try {
-            val fetchedList = mutableListOf<ShikimoriAnimeDto>()
-
-            // 1. Fetch strictly from 2026 season with popularity order
-            try {
-                val batch2026 = shikimoriApi.getAnimes(page = page, limit = limit, season = "2026", order = "popularity", kind = "tv,movie,ova,ona")
-                fetchedList.addAll(batch2026)
-            } catch (e: Exception) {
-                Log.w(TAG, "Error fetching 2026 batch: ${e.message}")
-            }
-
-            // 2. If needed, fetch ranked batch strictly for season 2026
-            if (fetchedList.size < limit) {
-                try {
-                    val ranked2026 = shikimoriApi.getAnimes(page = page, limit = limit, season = "2026", order = "ranked", kind = "tv,movie,ova,ona")
-                    fetchedList.addAll(ranked2026)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error fetching ranked 2026 batch: ${e.message}")
-                }
-            }
-
-            // 3. If needed, fetch aired_on batch strictly for season 2026
-            if (fetchedList.size < limit) {
-                try {
-                    val aired2026 = shikimoriApi.getAnimes(page = page, limit = limit, season = "2026", order = "aired_on", kind = "tv,movie,ova,ona")
-                    fetchedList.addAll(aired2026)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error fetching aired_on 2026 batch: ${e.message}")
-                }
-            }
-
-            // STRICT FILTERING: Must strictly be from the year 2026 and not an unreleased announcement!
-            val validNetwork2026 = fetchedList
-                .filter { anime ->
-                    !isFakeOrNonExistentAnime(anime) &&
-                    isStrict2026Anime(anime) &&
-                    !com.example.data.api.AnimeEpisodeHelper.isAnnouncement(anime)
-                }
-                .distinctBy { it.id }
-
-            // Put curated 2026 hits (Mushoku Tensei 3, Frieren 2, Re:Zero 4, etc.) FIRST on page 1
-            val combined2026 = if (page == 1) {
-                (mock2026 + validNetwork2026).distinctBy { it.id }.take(limit)
-            } else {
-                validNetwork2026.take(limit)
-            }
-
-            if (combined2026.isNotEmpty()) {
-                val enriched = com.example.data.api.AniListService.enrichAnimeCovers(combined2026)
-                if (page == 1 && limit <= 30) cached2026Animes = enriched
-                return@withContext enriched
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load 2026 releases: ${e.message}")
+        val anixartNew = com.example.data.api.AnixartService.getNew(limit, page)
+        if (anixartNew.isNotEmpty()) {
+            return@withContext anixartNew
         }
-        val fallback = if (page == 1) mock2026 else emptyList()
+        val fallback = if (page == 1) getMock2026Animes() else emptyList()
         com.example.data.api.AniListService.enrichAnimeCovers(fallback)
     }
 
     suspend fun getAnonsAnimes(limit: Int = 100, page: Int = 1): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        val curatedAnons = getMockAnonsAnimes().filter { anime ->
-            !isFakeOrNonExistentAnime(anime) &&
-            com.example.data.api.AnimeEpisodeHelper.isAnnouncement(anime)
+        val anixartAnons = com.example.data.api.AnixartService.getAnons(limit, page)
+        if (anixartAnons.isNotEmpty()) {
+            return@withContext anixartAnons
         }
-        try {
-            val fetchedList = mutableListOf<ShikimoriAnimeDto>()
-            try {
-                val batch = shikimoriApi.getAnimes(page = page, limit = limit, status = "anons", order = "popularity", kind = "tv,movie,ova,ona")
-                fetchedList.addAll(batch)
-            } catch (e: Exception) {
-                Log.w(TAG, "Error fetching anons page $page: ${e.message}")
-            }
-
-            val validFetched = fetchedList.filter { anime ->
-                !isFakeOrNonExistentAnime(anime) &&
-                com.example.data.api.AnimeEpisodeHelper.isAnnouncement(anime)
-            }
-
-            // Put curated unreleased announcements first, combined with verified live Shikimori anons
-            val combined = ((if (page == 1) curatedAnons else emptyList()) + validFetched)
-                .distinctBy { it.id }
-                .filter { anime ->
-                    com.example.data.api.AnimeEpisodeHelper.isAnnouncement(anime)
-                }
-                .take(limit)
-
-            if (combined.isNotEmpty()) {
-                val enriched = com.example.data.api.AniListService.enrichAnimeCovers(combined)
-                return@withContext enriched
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load anons animes from Shikimori: ${e.message}")
-        }
-        val fallback = if (page == 1) curatedAnons else emptyList()
+        val fallback = if (page == 1) getMockAnonsAnimes() else emptyList()
         com.example.data.api.AniListService.enrichAnimeCovers(fallback)
     }
 
@@ -349,109 +244,31 @@ class AnimeRepository(context: Context) {
     }
 
     suspend fun getRecommendations(limit: Int = 100, page: Int = 1): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        try {
-            val startPage = (page - 1) * 2 + 1
-            val pagesToFetch = if (limit <= 50) listOf(page) else listOf(startPage, startPage + 1, startPage + 2)
-            val fetchedList = mutableListOf<ShikimoriAnimeDto>()
-
-            for (p in pagesToFetch) {
-                try {
-                    val batch = shikimoriApi.getAnimes(page = p, limit = 50, order = "ranked", score = 8, kind = "tv,movie,ova,ona")
-                    fetchedList.addAll(batch)
-                    if (batch.isEmpty()) break
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error fetching recommendations page $p: ${e.message}")
-                }
-            }
-
-            val validAnimes = fetchedList
-                .filter { !isFakeOrNonExistentAnime(it) }
-                .distinctBy { it.id }
-                .take(limit)
-
-            if (validAnimes.isNotEmpty()) {
-                return@withContext com.example.data.api.AniListService.enrichAnimeCovers(validAnimes)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load recommendations: ${e.message}")
+        val anixartTopRated = com.example.data.api.AnixartService.getTopRated(limit, page)
+        if (anixartTopRated.isNotEmpty()) {
+            return@withContext anixartTopRated
         }
         com.example.data.api.AniListService.enrichAnimeCovers(getMockRecommendations().filter { !isFakeOrNonExistentAnime(it) })
     }
 
     /**
      * Curated showcase for the main "ALL" (Все) catalog view.
-     * Merges top popular hits, fresh releases, and high-rating masterpieces while filtering out
-     * obscure, low-rated, or old forgotten titles.
+     * Powered directly by Anixart catalog.
      */
     suspend fun getCuratedAllCatalog(limit: Int = 100, page: Int = 1): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        coroutineScope {
-            val popDeferred = async {
-                try { getPopularAnimes(limit = 60, page = page) } catch (_: Exception) { emptyList() }
-            }
-            val newDeferred = async {
-                try { get2026Releases(limit = 40, page = page) } catch (_: Exception) { emptyList() }
-            }
-            val recDeferred = async {
-                try { getRecommendations(limit = 40, page = page) } catch (_: Exception) { emptyList() }
-            }
-
-            val popular = popDeferred.await()
-            val fresh = newDeferred.await()
-            val recommended = recDeferred.await()
-
-            val combined = mutableListOf<ShikimoriAnimeDto>()
-            val seenIds = mutableSetOf<Long>()
-
-            fun addIfEligible(anime: ShikimoriAnimeDto) {
-                if (anime.id in seenIds) return
-                if (isFakeOrNonExistentAnime(anime)) return
-                val year = anime.airedOn?.take(4)?.toIntOrNull()
-                val score = anime.score?.toDoubleOrNull()
-                // Reject old obscure titles (< 2012 unless iconic masterpiece with score >= 8.5)
-                if (year != null && year < 2012 && (score == null || score < 8.5)) return
-                if (score != null && score < 7.2) return
-
-                seenIds.add(anime.id)
-                combined.add(anime)
-            }
-
-            val maxLen = maxOf(popular.size, fresh.size, recommended.size)
-            for (i in 0 until maxLen) {
-                if (i < popular.size) addIfEligible(popular[i])
-                if (i < fresh.size) addIfEligible(fresh[i])
-                if (i < recommended.size) addIfEligible(recommended[i])
-            }
-
-            if (combined.isEmpty()) {
-                val fallbacks = (getMockPopularAnimes() + getMock2026Animes() + getMockRecommendations())
-                    .distinctBy { it.id }
-                    .filter { !isFakeOrNonExistentAnime(it) }
-                return@coroutineScope com.example.data.api.AniListService.enrichAnimeCovers(fallbacks.take(limit))
-            }
-
-            com.example.data.api.AniListService.enrichAnimeCovers(combined.take(limit))
+        val anixartCurated = com.example.data.api.AnixartService.getCuratedAll(limit, page)
+        if (anixartCurated.isNotEmpty()) {
+            return@withContext anixartCurated
         }
+        getPopularAnimes(limit, page)
     }
 
     suspend fun getGenres(): List<ShikimoriGenreDto> = withContext(Dispatchers.IO) {
-        cachedGenres?.let { if (it.isNotEmpty()) return@withContext it }
-        try {
-            val genres = shikimoriApi.getGenres()
-            // Strictly filter only genuine Anime genres to prevent manga genre IDs that yield empty results
-            val animeGenres = genres.filter { 
-                it.entryType.equals("Anime", ignoreCase = true)
-            }
-            if (animeGenres.isNotEmpty()) {
-                val mapped = animeGenres.map { g ->
-                    val ukName = getUkrainianGenreName(g.id, g.russian ?: g.name)
-                    g.copy(russian = ukName)
-                }.sortedBy { it.russian ?: it.name }
-                cachedGenres = mapped
-                return@withContext mapped
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load dynamic genres: ${e.message}")
+        val anixartGenres = com.example.data.api.AnixartService.getGenres()
+        if (anixartGenres.isNotEmpty()) {
+            return@withContext anixartGenres
         }
+        cachedGenres?.let { if (it.isNotEmpty()) return@withContext it }
         val fallback = getMockGenres().map { g ->
             g.copy(russian = getUkrainianGenreName(g.id, g.russian ?: g.name))
         }.sortedBy { it.russian ?: it.name }
@@ -471,204 +288,43 @@ class AnimeRepository(context: Context) {
         maxYear: Int = 2026,
         score: Int? = null
     ): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
-        coroutineScope {
-            val seasonParam = when {
-                minYear == maxYear -> "$minYear"
-                minYear > 1989 || maxYear < 2026 -> "${minYear}_${maxYear}"
-                else -> null
-            }
-
-            val effectiveKind = kind ?: "tv,movie,ova,ona"
-
-            try {
-                if (limit <= 50) {
-                    val rawResults = shikimoriApi.getAnimes(
-                        page = page,
-                        limit = limit,
-                        order = order,
-                        kind = effectiveKind,
-                        status = status,
-                        genre = genreIds,
-                        season = seasonParam,
-                        score = score,
-                        search = if (!query.isNullOrBlank()) query.trim() else null
-                    ).filter { !isFakeOrNonExistentAnime(it) }
-
-                    val finalResults = if (minYear == 2026 && maxYear == 2026) {
-                        val mockMatching = if (page == 1) {
-                            getMock2026Animes().filter {
-                                !isFakeOrNonExistentAnime(it) &&
-                                (query.isNullOrBlank() || it.name.contains(query.trim(), ignoreCase = true) || it.russian?.contains(query.trim(), ignoreCase = true) == true)
-                            }
-                        } else emptyList()
-                        (mockMatching + rawResults.filter { isStrict2026Anime(it) }).distinctBy { it.id }.take(limit)
-                    } else rawResults
-
-                    return@coroutineScope com.example.data.api.AniListService.enrichAnimeCovers(finalResults)
-                } else {
-                    // Shikimori API limits to 50 items per request.
-                    // To fetch up to 100 items, fetch 2 pages of 50 items concurrently.
-                    val pageA = (page - 1) * 2 + 1
-                    val pageB = (page - 1) * 2 + 2
-
-                    val p1Deferred = async {
-                        try {
-                            shikimoriApi.getAnimes(
-                                page = pageA,
-                                limit = 50,
-                                order = order,
-                                kind = effectiveKind,
-                                status = status,
-                                genre = genreIds,
-                                season = seasonParam,
-                                score = score,
-                                search = if (!query.isNullOrBlank()) query.trim() else null
-                            )
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Search catalog page $pageA failed: ${e.message}")
-                            emptyList()
-                        }
-                    }
-                    val p2Deferred = async {
-                        try {
-                            shikimoriApi.getAnimes(
-                                page = pageB,
-                                limit = 50,
-                                order = order,
-                                kind = effectiveKind,
-                                status = status,
-                                genre = genreIds,
-                                season = seasonParam,
-                                score = score,
-                                search = if (!query.isNullOrBlank()) query.trim() else null
-                            )
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Search catalog page $pageB failed: ${e.message}")
-                            emptyList()
-                        }
-                    }
-
-                    val p1 = p1Deferred.await()
-                    val p2 = p2Deferred.await()
-                    val rawCombined = (p1 + p2)
-                        .filter { !isFakeOrNonExistentAnime(it) }
-
-                    val combined = if (minYear == 2026 && maxYear == 2026) {
-                        val mockMatching = if (page == 1) {
-                            getMock2026Animes().filter {
-                                !isFakeOrNonExistentAnime(it) &&
-                                (query.isNullOrBlank() || it.name.contains(query.trim(), ignoreCase = true) || it.russian?.contains(query.trim(), ignoreCase = true) == true)
-                            }
-                        } else emptyList()
-                        (mockMatching + rawCombined.filter { isStrict2026Anime(it) }).distinctBy { it.id }.take(limit)
-                    } else {
-                        rawCombined.distinctBy { it.id }.take(limit)
-                    }
-
-                    if (combined.isNotEmpty()) {
-                        return@coroutineScope com.example.data.api.AniListService.enrichAnimeCovers(combined)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Search catalog failed: ${e.message}")
-            }
-
-            // Return filtered mock data in case of offline/network failure
-            val allMock = (getMockPopularAnimes() + getMock2026Animes() + getMockRecommendations())
-                .filter { !isFakeOrNonExistentAnime(it) }
-            val filtered = if (!query.isNullOrBlank()) {
-                val q = query.trim().lowercase()
-                allMock.filter {
-                    it.name.lowercase().contains(q) ||
-                    (it.russian?.lowercase()?.contains(q) == true)
-                }
-            } else {
-                allMock.distinctBy { it.id }
-            }
-            return@coroutineScope com.example.data.api.AniListService.enrichAnimeCovers(filtered)
+        val anixartResults = com.example.data.api.AnixartService.search(
+            query = query.orEmpty(),
+            page = page,
+            limit = limit,
+            sort = order,
+            genre = genreIds,
+            kind = kind,
+            status = status,
+            minYear = minYear,
+            maxYear = maxYear,
+            score = score
+        )
+        if (anixartResults.isNotEmpty()) {
+            return@withContext anixartResults
         }
+
+        // Return filtered mock data in case of offline/network failure
+        val allMock = (getMockPopularAnimes() + getMock2026Animes() + getMockRecommendations())
+            .filter { !isFakeOrNonExistentAnime(it) }
+        val filtered = if (!query.isNullOrBlank()) {
+            val q = query.trim().lowercase()
+            allMock.filter {
+                it.name.lowercase().contains(q) ||
+                (it.russian?.lowercase()?.contains(q) == true)
+            }
+        } else {
+            allMock.distinctBy { it.id }
+        }
+        com.example.data.api.AniListService.enrichAnimeCovers(filtered.take(limit))
     }
 
-    private var cachedSchedule: List<ScheduleItem>? = AnimeScheduleData.getRealShikimoriSchedule()
-
     suspend fun getSchedule(forceRefresh: Boolean = false): List<ScheduleItem> = withContext(Dispatchers.IO) {
-        if (!forceRefresh) {
-            cachedSchedule?.let { if (it.isNotEmpty()) return@withContext it }
+        val anixartSchedule = com.example.data.api.AnixartService.getSchedule(forceRefresh)
+        if (anixartSchedule.isNotEmpty()) {
+            return@withContext anixartSchedule
         }
-
-        val scheduleMap = mutableMapOf<Long, ScheduleItem>()
-
-        try {
-            val calendarDtos = shikimoriApi.getCalendar()
-            if (calendarDtos.isNotEmpty()) {
-                // Filter genuine ongoing TV/ONA anime
-                val validDtos = calendarDtos.filter { dto ->
-                    val kind = dto.anime.kind?.lowercase() ?: "tv"
-                    val isTvOrOna = kind == "tv" || kind == "ona" || kind == "special"
-                    val hasName = !dto.anime.name.isNullOrBlank() || !dto.anime.russian.isNullOrBlank()
-                    val hasAirDate = !dto.nextEpisodeAt.isNullOrBlank()
-                    isTvOrOna && hasName && hasAirDate
-                }
-
-                // Batch resolve official covers via AniList GraphQL for blazing speed
-                com.example.data.api.AniListService.fetchAniListCoversBatch(validDtos.map { it.anime.id })
-
-                for (dto in validDtos) {
-                    val rawCover = dto.anime.image?.original ?: dto.anime.image?.preview
-                    val resolvedRu = com.example.data.api.ShikimoriRussianTitles.resolveRussianTitle(
-                        animeId = dto.anime.id,
-                        currentRussian = dto.anime.russian,
-                        name = dto.anime.name
-                    )
-                    val resolvedCover = com.example.data.api.AniListService.resolveCover(
-                        rawUrl = rawCover,
-                        animeId = dto.anime.id,
-                        animeName = resolvedRu.ifBlank { dto.anime.name }
-                    ).ifBlank {
-                        "https://shikimori.one/system/animes/original/${dto.anime.id}.jpg"
-                    }
-
-                    val fastAnime = dto.anime.copy(
-                        russian = resolvedRu,
-                        image = dto.anime.image?.copy(original = resolvedCover, preview = resolvedCover)
-                            ?: ShikimoriImageDto(original = resolvedCover, preview = resolvedCover)
-                    )
-
-                    // Strictly parse the air date from Shikimori next_episode_at
-                    // So if it airs on Thursday, it will show under Thursday for everyone
-                    val realDay = AnimeScheduleData.parseDayOfWeek(dto.nextEpisodeAt)
-                    val timeStr = formatScheduleTime(dto.nextEpisodeAt)
-                    val dayName = AnimeScheduleData.getDayName(realDay)
-
-                    scheduleMap[fastAnime.id] = ScheduleItem(
-                        anime = fastAnime,
-                        nextEpisode = dto.nextEpisode ?: 1,
-                        nextEpisodeAt = dto.nextEpisodeAt,
-                        formattedTime = if (timeStr.isNotBlank()) timeStr else "18:00",
-                        dayOfWeek = realDay,
-                        dayName = dayName
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch live Shikimori calendar: ${e.message}")
-        }
-
-        // If network failed or empty, fallback to authentic pre-compiled 2026 Shikimori schedule
-        if (scheduleMap.isEmpty()) {
-            val fallback = AnimeScheduleData.getRealShikimoriSchedule()
-            fallback.forEach { scheduleMap[it.anime.id] = it }
-        }
-
-        val resultList = scheduleMap.values.sortedWith(
-            compareBy<ScheduleItem> { it.dayOfWeek }.thenBy { it.formattedTime }
-        )
-
-        if (resultList.isNotEmpty()) {
-            cachedSchedule = resultList
-        }
-
-        return@withContext resultList
+        AnimeScheduleData.getRealShikimoriSchedule()
     }
 
     private fun parseDayOfWeek(isoString: String?): Int {
@@ -709,6 +365,11 @@ class AnimeRepository(context: Context) {
     }
 
     suspend fun getAnimeDetails(id: Long): ShikimoriAnimeDetailDto = withContext(Dispatchers.IO) {
+        val anixartDetail = com.example.data.api.AnixartService.getDetails(id)
+        if (anixartDetail != null) {
+            return@withContext anixartDetail
+        }
+
         if (com.example.data.api.AnimeEpisodeHelper.KNOWN_ANNOUNCEMENT_IDS.contains(id)) {
             val mock = getMockAnimeDetails(id)
             return@withContext com.example.data.api.AniListService.enrichAnimeDetailCover(mock)
@@ -768,6 +429,10 @@ class AnimeRepository(context: Context) {
     }
 
     suspend fun getAnimeScreenshots(id: Long): List<String> = withContext(Dispatchers.IO) {
+        val anixartScreens = com.example.data.api.AnixartService.getScreenshots(id)
+        if (anixartScreens.isNotEmpty()) {
+            return@withContext anixartScreens.take(10)
+        }
         try {
             val response = shikimoriApi.getAnimeScreenshots(id)
             val screenshots = response.mapNotNull { sc ->
@@ -1017,6 +682,10 @@ class AnimeRepository(context: Context) {
     }
 
     suspend fun getSimilarAnime(id: Long): List<ShikimoriAnimeDto> = withContext(Dispatchers.IO) {
+        val anixartSimilar = com.example.data.api.AnixartService.getSimilar(id)
+        if (anixartSimilar.isNotEmpty()) {
+            return@withContext anixartSimilar
+        }
         try {
             val response = shikimoriApi.getAnimeSimilar(id)
             if (response.isNotEmpty()) {

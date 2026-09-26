@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "name": "Сериал",
+    "code": "tv"
+  },
+  {
+    "id": 2,
+    "name": "Фильм",
+    "code": "movie"
+  },
+  {
+    "id": 3,
+    "name": "OVA",
+    "code": "ova"
+  },
+  {
+    "id": 4,
+    "name": "Спешл",
+    "code": "special"
+  }
+]

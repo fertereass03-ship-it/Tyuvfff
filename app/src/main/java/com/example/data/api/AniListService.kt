@@ -722,11 +722,17 @@ object AniListService {
     ): String {
         val idKey = animeId?.toString()
 
-        // 0. If Yani API has a high-quality verified poster for this anime, prioritize it everywhere!
-        val yaniPoster = YaniCatalogService.getYaniPoster(animeId, animeName)
-        if (!yaniPoster.isNullOrBlank()) {
-            if (idKey != null) coverCache[idKey] = yaniPoster
-            return yaniPoster
+        // 0. If rawUrl is ALREADY an authentic Anixart, MAL, AniList, Yani or Shikimori poster and not broken:
+        // PRESERVE IT DIRECTLY! Never overwrite an anime's own valid poster with a fuzzy lookup!
+        if (!rawUrl.isNullOrBlank() && !isBrokenOr404(rawUrl)) {
+            val cleanUrl = if (rawUrl.startsWith("//")) "https:$rawUrl" else rawUrl
+            if (cleanUrl.contains("anixmirai.com") || cleanUrl.contains("anixart") ||
+                cleanUrl.contains("cdn.myanimelist.net") || cleanUrl.contains("s4.anilist.co") ||
+                cleanUrl.contains("static.yani.tv") || cleanUrl.contains("shikimori.io") ||
+                cleanUrl.contains("shikimori.one") || cleanUrl.contains("desu.shikimori.one")) {
+                if (idKey != null) coverCache[idKey] = cleanUrl
+                return cleanUrl
+            }
         }
 
         // 1. If a verified authentic poster exists in knownCoversById, prioritize it!
@@ -734,6 +740,20 @@ object AniListService {
             val cover = knownCoversById[idKey]!!
             coverCache[idKey] = cover
             return cover
+        }
+
+        // 2. If Anixart catalog has an authentic poster by exact ID or exact title:
+        val anixartPoster = AnixartService.getPoster(animeId, animeName)
+        if (!anixartPoster.isNullOrBlank()) {
+            if (idKey != null) coverCache[idKey] = anixartPoster
+            return anixartPoster
+        }
+
+        // 3. If Yani API has a high-quality verified poster for this anime, prioritize it!
+        val yaniPoster = YaniCatalogService.getYaniPoster(animeId, animeName)
+        if (!yaniPoster.isNullOrBlank()) {
+            if (idKey != null) coverCache[idKey] = yaniPoster
+            return yaniPoster
         }
 
 

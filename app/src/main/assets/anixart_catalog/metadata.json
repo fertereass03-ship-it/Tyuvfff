@@ -1,0 +1,7 @@
+{
+  "name": "Anixart Catalog",
+  "source": "https://api.anixart.tv/",
+  "image_base": "https://s.anixmirai.com/posters/",
+  "screenshot_base": "https://s.anixmirai.com/screenshots/",
+  "version": "8.2"
+}
